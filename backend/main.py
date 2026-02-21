@@ -23,6 +23,16 @@ from services.npm_service import NpmService
 from services.diff_service import DiffService
 from services.ai_service import AiService
 from utils import get_logger
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # for hackathon, allow all
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 logger = get_logger("sentinel_source")
 

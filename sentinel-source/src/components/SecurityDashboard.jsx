@@ -14,6 +14,7 @@ import DependencyTable from "./DependencyTable";
 
 export default function SecurityDashboard({ data, onReset }) {
   const { score, dependencies = [], analyzed_at, file_name } = data;
+  console.log("DASHBOARD DEPENDENCIES:", dependencies);
 
   return (
     <div className="min-h-screen bg-grid">

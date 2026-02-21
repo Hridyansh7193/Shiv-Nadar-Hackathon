@@ -2,10 +2,12 @@ import { useState, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import FileUpload from "@/components/FileUpload";
 import SecurityDashboard from "@/components/SecurityDashboard";
+import LandingPage from "@/pages/LandingPage";
+import AuthPage from "@/pages/AuthPage";
+import PricingPage from "@/pages/PricingPage";
 import { analyzeDependencies } from "@/services/api";
 
-// Set to true to preview the dashboard with fake data (no backend needed)
-const DEMO_MODE = true;
+const DEMO_MODE = false;
 
 const MOCK_DATA = {
   score: 64,
@@ -79,10 +81,11 @@ const MOCK_DATA = {
 };
 
 export default function App() {
-  const [view, setView] = useState("upload"); // "upload" | "dashboard"
-  const [isLoading, setIsLoading] = useState(false);
+  const [view, setView] = useState("landing");
   const [error, setError] = useState(null);
   const [analysisData, setAnalysisData] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  console.log("FINAL DATA:", analysisData);
 
   const handleFileUpload = useCallback(async (file) => {
     setIsLoading(true);
@@ -96,11 +99,12 @@ export default function App() {
         data = MOCK_DATA;
       } else {
         data = await analyzeDependencies(file);
-      }
-      setAnalysisData({
-        ...data,
-        file_name: file.name,
+      }setAnalysisData({
+        dependencies: data.dependencies,
+        score: data.score,
+        highRiskCount: data.highRiskCount,
         analyzed_at: data.analyzed_at || new Date().toISOString(),
+        file_name: file.name,
       });
       setView("dashboard");
     } catch (err) {
@@ -109,6 +113,7 @@ export default function App() {
         err.response?.data?.message ||
         err.message ||
         "Failed to analyze dependencies. Please try again.";
+        console.error("UPLOAD ERROR:", err);
       setError(message);
     } finally {
       setIsLoading(false);
@@ -123,7 +128,53 @@ export default function App() {
 
   return (
     <AnimatePresence mode="wait">
-      {view === "upload" ? (
+      {view === "landing" && (
+        <motion.div
+          key="landing"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <LandingPage
+            onGetStarted={() => setView("auth")}
+            onSignIn={() => setView("auth")}
+            onViewPricing={() => setView("pricing")}
+          />
+        </motion.div>
+      )}
+
+      {view === "auth" && (
+        <motion.div
+          key="auth"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <AuthPage
+            onBack={() => setView("landing")}
+            onAuthSuccess={() => setView("upload")}
+          />
+        </motion.div>
+      )}
+
+      {view === "pricing" && (
+        <motion.div
+          key="pricing"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3 }}
+        >
+          <PricingPage
+            onBack={() => setView("landing")}
+            onSelectPlan={() => setView("auth")}
+          />
+        </motion.div>
+      )}
+
+      {view === "upload" && (
         <motion.div
           key="upload"
           initial={{ opacity: 0 }}
@@ -137,7 +188,9 @@ export default function App() {
             error={error}
           />
         </motion.div>
-      ) : (
+      )}
+
+      {view === "dashboard" && (
         <motion.div
           key="dashboard"
           initial={{ opacity: 0 }}
