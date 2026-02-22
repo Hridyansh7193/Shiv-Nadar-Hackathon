@@ -106,7 +106,7 @@ export default function SecurityDashboard({ data, onReset }) {
                     </div>
                     <div>
                       <p className="text-2xl font-bold text-cyber-green">
-                        {score ?? 0}
+                        {Number(score ?? 0).toFixed(2)}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         Security Score

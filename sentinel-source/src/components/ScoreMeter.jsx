@@ -59,7 +59,7 @@ export default function ScoreMeter({ score = 0 }) {
             animate={{ opacity: 1 }}
             transition={{ delay: 0.5 }}
           >
-            {animatedScore}
+            {Number(animatedScore).toFixed(2)}
           </motion.span>
           <span className="text-xs text-muted-foreground uppercase tracking-widest mt-1">
             / 100

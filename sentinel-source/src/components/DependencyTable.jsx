@@ -46,15 +46,14 @@ export default function DependencyTable({ dependencies = [] }) {
             <TableHead className="text-right">Risk Score</TableHead>
           </TableRow>
         </TableHeader>
+
+        {/* ✅ ONLY ONE tbody */}
         <TableBody>
           {dependencies.map((dep, index) => (
-            <motion.tbody
-              key={dep.name || index}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.05 }}
-            >
+            <>
+              {/* Row */}
               <TableRow
+                key={dep.name || index}
                 className="cursor-pointer hover:bg-muted/30 transition-colors border-border/30"
                 onClick={() => toggleRow(index)}
               >
@@ -65,17 +64,21 @@ export default function DependencyTable({ dependencies = [] }) {
                     <ChevronRight className="w-4 h-4 text-muted-foreground" />
                   )}
                 </TableCell>
+
                 <TableCell className="font-medium font-mono text-sm">
                   {dep.name}
                 </TableCell>
+
                 <TableCell className="text-muted-foreground text-sm">
                   {dep.version || "N/A"}
                 </TableCell>
+
                 <TableCell>
                   <Badge variant={getRiskVariant(dep.risk_level)}>
                     {getRiskLabel(dep.risk_level)}
                   </Badge>
                 </TableCell>
+
                 <TableCell className="text-right">
                   <span
                     className="font-mono font-semibold text-sm"
@@ -93,11 +96,11 @@ export default function DependencyTable({ dependencies = [] }) {
                 </TableCell>
               </TableRow>
 
-              {/* Expandable AI explanation */}
+              {/* Expandable row */}
               <AnimatePresence>
                 {expandedRow === index && dep.explanation && (
-                  <tr>
-                    <td colSpan={5} className="p-0">
+                  <TableRow>
+                    <TableCell colSpan={5} className="p-0">
                       <motion.div
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: "auto", opacity: 1 }}
@@ -119,11 +122,11 @@ export default function DependencyTable({ dependencies = [] }) {
                           </div>
                         </div>
                       </motion.div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 )}
               </AnimatePresence>
-            </motion.tbody>
+            </>
           ))}
         </TableBody>
       </Table>
