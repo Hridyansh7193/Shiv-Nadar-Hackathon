@@ -1,0 +1,39 @@
+name: 🛡️ Sentinel Source Security Scan
+
+on:
+  push:
+    branches: [main, swastika]
+  pull_request:
+    branches: [main]
+
+jobs:
+  security-scan:
+    name: Scan Dependencies
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v3
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 📦 Install Dependencies
+        run: pip install httpx python-dotenv
+
+      - name: 🔍 Run Sentinel Source Scan
+        env:
+          SENTINEL_API_URL: ${{ secrets.SENTINEL_API_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          python backend/services/cicd_scanner.py sentinel-source/package.json
+
+      - name: ✅ Build Passed
+        if: success()
+        run: echo "🟢 All dependencies safe!"
+
+      - name: ❌ Build Failed
+        if: failure()
+        run: echo "🔴 High risk detected — build blocked!"

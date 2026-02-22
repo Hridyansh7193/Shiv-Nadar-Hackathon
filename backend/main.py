@@ -1,40 +1,32 @@
-"""Sentinel Source – The Dependency Firewall
-
-FastAPI backend that accepts a package.json upload and analyzes
-dependency updates for malicious code changes.
-"""
-
 import json
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+import uuid
 
 # Ensure the backend directory is on sys.path so services/models/utils resolve
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 load_dotenv()
 
+from database import engine, Base, get_db
 from models.schemas import AnalysisResponse, DependencyRisk
 from services.npm_service import NpmService
 from services.diff_service import DiffService
 from services.ai_service import AiService
 from utils import get_logger
-from fastapi.middleware.cors import CORSMiddleware
-
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # for hackathon, allow all
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 logger = get_logger("sentinel_source")
+
+# ---------------------------------------------------------------------------
+# Create tables on startup
+# ---------------------------------------------------------------------------
+Base.metadata.create_all(bind=engine)
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -72,17 +64,12 @@ async def root():
 
 
 @app.post("/analyze", response_model=AnalysisResponse, tags=["Analysis"])
-async def analyze_package_json(file: UploadFile = File(...)):
-    """Accept a package.json upload and analyze every dependency for risks.
+async def analyze_package_json(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Accept a package.json upload and analyze every dependency for risks."""
 
-    Workflow per dependency:
-    1. Fetch npm registry metadata
-    2. Resolve latest + previous versions
-    3. Download tarball sources for both versions
-    4. Generate a unified diff
-    5. Run heuristic (+ optional AI) risk analysis on the diff
-    6. Return structured risk results
-    """
     # ── Validate upload ──────────────────────────────────────────────────
     if not file.filename or not file.filename.endswith(".json"):
         raise HTTPException(status_code=400, detail="Please upload a .json file")
@@ -131,10 +118,51 @@ async def analyze_package_json(file: UploadFile = File(...)):
                     )
                 )
 
-    # Sort by risk score descending so highest risks appear first
+    # Sort by risk score descending
     results.sort(key=lambda r: r.risk_score, reverse=True)
 
     high_risk_count = sum(1 for r in results if r.risk_score >= 50)
+
+    # ── Save scan to database ─────────────────────────────────────────────
+    try:
+        from models.scan_models import Scan, Dependency
+
+        # Calculate overall score
+        if results:
+            overall_score = sum(r.risk_score for r in results) / len(results)
+        else:
+            overall_score = 0.0
+
+        # Save scan
+        scan = Scan(
+            id=uuid.uuid4(),
+            overall_score=overall_score,
+            total_packages=float(len(results)),
+            high_risk_count=float(high_risk_count),
+        )
+        db.add(scan)
+        db.flush()
+
+        # Save each dependency result
+        for r in results:
+            dep_record = Dependency(
+                id=uuid.uuid4(),
+                scan_id=scan.id,
+                name=r.dependency,
+                old_version=r.previous_version or "",
+                new_version=r.latest_version or "",
+                risk_level=r.risk_level,
+                risk_reason=r.reason,
+                severity_score=float(r.risk_score),
+            )
+            db.add(dep_record)
+
+        db.commit()
+        logger.info("✅ Scan saved to database with ID: %s", scan.id)
+
+    except Exception as e:
+        db.rollback()
+        logger.error("❌ Failed to save scan to database: %s", e)
 
     return AnalysisResponse(
         project_name=project_name,
@@ -145,21 +173,76 @@ async def analyze_package_json(file: UploadFile = File(...)):
 
 
 # ---------------------------------------------------------------------------
+# Scan History Endpoint
+# ---------------------------------------------------------------------------
+@app.get("/scans", tags=["History"])
+async def get_scan_history(db: Session = Depends(get_db)):
+    """Get all previous scan results from database."""
+    try:
+        from models.scan_models import Scan
+        scans = db.query(Scan).order_by(Scan.created_at.desc()).all()
+        return {
+            "scans": [
+                {
+                    "id": str(s.id),
+                    "created_at": str(s.created_at),
+                    "overall_score": s.overall_score,
+                    "total_packages": s.total_packages,
+                    "high_risk_count": s.high_risk_count,
+                }
+                for s in scans
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/scans/{scan_id}", tags=["History"])
+async def get_scan_detail(scan_id: str, db: Session = Depends(get_db)):
+    """Get detailed results for a specific scan."""
+    try:
+        from models.scan_models import Scan, Dependency
+        scan = db.query(Scan).filter(Scan.id == uuid.UUID(scan_id)).first()
+        if not scan:
+            raise HTTPException(status_code=404, detail="Scan not found")
+
+        dependencies = db.query(Dependency).filter(
+            Dependency.scan_id == scan.id
+        ).all()
+
+        return {
+            "scan_id": str(scan.id),
+            "created_at": str(scan.created_at),
+            "overall_score": scan.overall_score,
+            "total_packages": scan.total_packages,
+            "high_risk_count": scan.high_risk_count,
+            "dependencies": [
+                {
+                    "name": d.name,
+                    "old_version": d.old_version,
+                    "new_version": d.new_version,
+                    "risk_level": d.risk_level,
+                    "risk_reason": d.risk_reason,
+                    "severity_score": d.severity_score,
+                }
+                for d in dependencies
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 def _analyze_single_dependency(dep: dict) -> DependencyRisk:
-    """Full analysis pipeline for a single dependency.
-
-    Fetches metadata → resolves versions → downloads tarballs →
-    generates diff → runs risk analysis.
-    """
+    """Full analysis pipeline for a single dependency."""
     name = dep["name"]
     version = dep["version"]
     clean_version = NpmService.clean_version(version)
 
     logger.info("Processing %s@%s", name, version)
 
-    # Step 1: Fetch npm metadata
     metadata = NpmService.fetch_package_metadata(name)
     if metadata is None:
         return DependencyRisk(
@@ -171,12 +254,9 @@ def _analyze_single_dependency(dep: dict) -> DependencyRisk:
             error="npm registry unreachable or package not found",
         )
 
-    # Step 2: Resolve versions
     latest_version = NpmService.get_latest_version(metadata)
     previous_version = NpmService.get_previous_version(metadata, version)
-    repo_url = NpmService.get_repository_url(metadata)
 
-    # Determine which two versions to diff
     old_ver = previous_version or clean_version
     new_ver = latest_version or clean_version
 
@@ -191,7 +271,6 @@ def _analyze_single_dependency(dep: dict) -> DependencyRisk:
             reason=f"{name} is already at the latest version ({new_ver})",
         )
 
-    # Step 3: Download tarballs
     logger.info("Downloading %s: %s → %s", name, old_ver, new_ver)
     old_sources = NpmService.fetch_tarball_source(name, old_ver)
     new_sources = NpmService.fetch_tarball_source(name, new_ver)
@@ -208,7 +287,6 @@ def _analyze_single_dependency(dep: dict) -> DependencyRisk:
             error="Tarball download failed for both versions",
         )
 
-    # Step 4: Generate diff
     diff_text = DiffService.generate_diff(
         old_sources,
         new_sources,
@@ -228,7 +306,6 @@ def _analyze_single_dependency(dep: dict) -> DependencyRisk:
             diff_available=False,
         )
 
-    # Step 5: Analyze the diff
     added_lines = DiffService.get_added_lines(diff_text)
     analysis = AiService.analyze_diff(diff_text, name, added_lines)
 
@@ -248,7 +325,7 @@ def _analyze_single_dependency(dep: dict) -> DependencyRisk:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-if __name__ == "__main__":
+if __name__ == "_main_":
     import uvicorn
 
     host = os.getenv("HOST", "0.0.0.0")
